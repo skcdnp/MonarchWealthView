@@ -1,24 +1,29 @@
-// auth.js — Google authentication using two separate Google libraries:
+// auth.js — Google authentication
 //
-//   1. Google Identity Services (GSI) — sign-in button + ID token (who the user is)
-//   2. gapi token client — access token for Sheets API calls (what they can do)
+// Two Google libraries:
+//   1. GSI (accounts.google.com/gsi/client) — sign-in button + ID token
+//   2. gapi — stores the Sheets access token in memory
 //
-// The two-library approach is Google's current recommended pattern for browser SPAs.
-// The older gapi.auth2 library is deprecated.
+// GitHub Pages sets Cross-Origin-Opener-Policy: same-origin which blocks
+// OAuth popups. We use ux_mode: 'redirect' so the token flow is a full-page
+// redirect instead of a popup — this is unaffected by COOP.
+//
+// Redirect flow:
+//   1. User signs in with GSI → we save user to sessionStorage
+//   2. User clicks "Connect Sheets" → tokenClient redirects to Google
+//   3. Google redirects back → #access_token=... in the URL hash
+//   4. main.js detects the token in the hash, restores user, loads data
 
 import { store } from './store.js';
 
+const SESSION_USER_KEY = 'mwv_user';
 let tokenClient = null;
-let resolveTokenPromise = null;
 
-// Decode a JWT without verifying the signature.
-// Signature verification is Google's job on their servers; we just need the payload.
 function parseJwt(token) {
   const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
   return JSON.parse(atob(base64));
 }
 
-// Wait for a global variable to appear (Google scripts load asynchronously)
 function waitForGlobal(name, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     if (window[name]) return resolve(window[name]);
@@ -27,102 +32,103 @@ function waitForGlobal(name, timeoutMs = 10000) {
       if (window[name]) { clearInterval(interval); resolve(window[name]); }
       else if (Date.now() - start > timeoutMs) {
         clearInterval(interval);
-        reject(new Error(`Timed out waiting for window.${name}`));
+        reject(new Error(`Timed out waiting for ${name}`));
       }
     }, 50);
   });
 }
 
-/**
- * Initialise both Google auth libraries.
- * Must be called once before renderSignInButton() or requestAccessToken().
- * @param {function} onSignIn  Called with the user object after whitelist check passes.
- * @param {function} onDenied  Called with the user's email if not on the whitelist.
- */
-export async function initAuth(onSignIn, onDenied) {
-  // Wait for both Google scripts to be ready
-  await Promise.all([
-    waitForGlobal('google'),
-    waitForGlobal('gapi'),
-  ]);
-
-  // --- 1. Google Identity Services (sign-in + ID token) ---
-  google.accounts.id.initialize({
-    client_id: CONFIG.CLIENT_ID,
-    callback: (response) => handleCredential(response, onSignIn, onDenied),
-    auto_select: true,          // auto-signs in returning users silently
-    cancel_on_tap_outside: false,
-  });
-
-  // --- 2. gapi client (token storage only — no discovery doc needed) ---
-  await new Promise((resolve, reject) => {
-    gapi.load('client', { callback: resolve, onerror: reject });
-  });
-
-  // We use direct fetch calls for Sheets API, so no discovery doc is needed.
-  // gapi.client is only used here to store/retrieve the access token.
-  await gapi.client.init({});
-
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.CLIENT_ID,
-    scope: CONFIG.SCOPES,
-    callback: (tokenResponse) => {
-      const resolve = resolveTokenPromise;
-      resolveTokenPromise = null;
-      if (tokenResponse.error) {
-        console.error('Token error:', tokenResponse.error);
-        resolve({ error: tokenResponse.error });
-      } else {
-        gapi.client.setToken({ access_token: tokenResponse.access_token });
-        resolve({ token: tokenResponse.access_token });
-      }
-    },
-    error_callback: (err) => {
-      // Fired when the user closes the consent popup or popups are blocked
-      console.error('Token client error:', err);
-      const resolve = resolveTokenPromise;
-      resolveTokenPromise = null;
-      if (resolve) resolve({ error: err.type || 'popup_closed' });
-    },
-  });
+// Save/restore user across the redirect
+export function saveUserToSession(user) {
+  sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+}
+export function restoreUserFromSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+export function clearUserFromSession() {
+  sessionStorage.removeItem(SESSION_USER_KEY);
 }
 
 /**
- * Render the "Sign in with Google" button in the given container element.
+ * Check if the current URL contains an OAuth access token returned by the
+ * redirect flow (#access_token=...). Call this before showing the sign-in
+ * screen — if a token is present we can skip the whole auth UI.
+ *
+ * Returns { token, user } if a redirect token is present, null otherwise.
  */
+export function extractRedirectToken() {
+  const hash = window.location.hash;
+  if (!hash.includes('access_token=')) return null;
+
+  const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  const accessToken = params.get('access_token');
+  if (!accessToken) return null;
+
+  // Clean the token out of the URL so hash-based routing works normally
+  history.replaceState(null, '', window.location.pathname);
+
+  const user = restoreUserFromSession();
+  return { token: accessToken, user };
+}
+
+/**
+ * Initialise both Google auth libraries.
+ */
+export async function initAuth(onSignIn, onDenied) {
+  await Promise.all([waitForGlobal('google'), waitForGlobal('gapi')]);
+
+  // 1. GSI — sign-in button
+  google.accounts.id.initialize({
+    client_id: CONFIG.CLIENT_ID,
+    callback: (response) => handleCredential(response, onSignIn, onDenied),
+    auto_select: true,
+    cancel_on_tap_outside: false,
+  });
+
+  // 2. gapi — used only to store/retrieve the access token in memory
+  await new Promise((resolve, reject) => {
+    gapi.load('client', { callback: resolve, onerror: reject });
+  });
+  await gapi.client.init({});
+
+  // 3. Token client — redirect mode (no popup, unaffected by COOP)
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.CLIENT_ID,
+    scope: CONFIG.SCOPES,
+    ux_mode: 'redirect',
+    redirect_uri: window.location.origin + window.location.pathname,
+    // callback is not used in redirect mode — token comes back in URL hash
+    callback: () => {},
+  });
+}
+
 export function renderSignInButton(containerId) {
   google.accounts.id.renderButton(
     document.getElementById(containerId),
-    {
-      theme: 'outline',
-      size: 'large',
-      text: 'signin_with',
-      shape: 'rectangular',
-      width: 280,
-    }
+    { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 280 }
   );
-  // Also prompt One Tap if the user has previously signed in
   google.accounts.id.prompt();
 }
 
 /**
- * Request a Sheets-scoped access token.
- * Returns { token } on success or { error } on failure.
- * Pass forceConsent=true to always show the Google consent screen
- * (required when called from a direct user click to avoid popup blockers).
+ * Trigger the Sheets token redirect.
+ * Must be called from a direct user click (button handler).
  */
-export function requestAccessToken(forceConsent = false) {
-  return new Promise((resolve) => {
-    resolveTokenPromise = resolve;
-    tokenClient.requestAccessToken({ prompt: forceConsent ? 'consent' : '' });
-  });
+export function requestAccessToken() {
+  tokenClient.requestAccessToken();
+  // Never resolves — the page navigates away
 }
 
-/**
- * Sign the user out and clear local state.
- */
+export function setAccessToken(token) {
+  gapi.client.setToken({ access_token: token });
+}
+
 export function signOut() {
   const email = store.user?.email;
+  clearUserFromSession();
   store.user = null;
   store.accounts = [];
   store.history = [];
@@ -130,28 +136,21 @@ export function signOut() {
   gapi.client.setToken(null);
   if (email) google.accounts.id.revoke(email, () => {});
   google.accounts.id.disableAutoSelect();
-  // Reload so the sign-in screen re-renders cleanly
   window.location.reload();
 }
 
-// Internal: called by GSI after the user clicks "Sign in with Google"
 async function handleCredential(response, onSignIn, onDenied) {
   const payload = parseJwt(response.credential);
-  const user = {
-    email: payload.email,
-    name: payload.name,
-    picture: payload.picture,
-  };
+  const user = { email: payload.email, name: payload.name, picture: payload.picture };
 
   const allowed = CONFIG.WHITELIST
     .map(e => e.toLowerCase().trim())
     .includes(user.email.toLowerCase().trim());
 
-  if (!allowed) {
-    onDenied(user.email);
-    return;
-  }
+  if (!allowed) { onDenied(user.email); return; }
 
+  // Save to sessionStorage so we can restore after the redirect
+  saveUserToSession(user);
   store.user = user;
   onSignIn(user);
 }
