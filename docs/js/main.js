@@ -1,24 +1,18 @@
-// main.js — app entry point.
-// Orchestrates the startup sequence:
-//   1. Init Google auth libraries
-//   2. Show sign-in screen
-//   3. On successful auth + whitelist pass → get Sheets access token
-//   4. Load all data from Google Sheets
-//   5. Load FX rates
-//   6. Show app shell and route to #dashboard
-
 import { initAuth, renderSignInButton, requestAccessToken, signOut } from './auth.js';
 import { loadAllData } from './sheets.js';
 import { loadRates } from './currency.js';
-import { store } from './store.js';
-import { renderNav } from './components/nav.js';
+import { renderNav, updateNavActive, initMobileSidebar } from './components/nav.js';
 import { navigate, initRouter } from './router.js';
 
 // ── Screen helpers ────────────────────────────────────────────────────────────
 
 function showScreen(id) {
-  ['signin-screen', 'access-denied-screen', 'loading-screen', 'app-shell']
-    .forEach(s => document.getElementById(s)?.classList.toggle('hidden', s !== id));
+  const screens = ['signin-screen','access-denied-screen','loading-screen','app-shell'];
+  screens.forEach(s => {
+    const el = document.getElementById(s);
+    if (!el) return;
+    el.style.display = s === id ? (s === 'app-shell' ? 'flex' : 'flex') : 'none';
+  });
 }
 
 function setLoadingMessage(msg) {
@@ -26,120 +20,110 @@ function setLoadingMessage(msg) {
   if (el) el.textContent = msg;
 }
 
-// ── Dark mode ─────────────────────────────────────────────────────────────────
-
-function initDarkMode() {
-  const saved = localStorage.getItem('mwv_dark');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  if (saved === 'true' || (saved === null && prefersDark)) {
-    document.documentElement.classList.add('dark');
-  }
-
-  document.getElementById('darkmode-btn')?.addEventListener('click', () => {
-    const isDark = document.documentElement.classList.toggle('dark');
-    localStorage.setItem('mwv_dark', isDark);
-    document.getElementById('darkmode-btn').textContent = isDark ? '☀️' : '🌙';
-  });
-
-  const isDark = document.documentElement.classList.contains('dark');
-  const btn = document.getElementById('darkmode-btn');
-  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
-}
-
-// ── Sheets consent screen ─────────────────────────────────────────────────────
-// Shown after Google sign-in. The user must click a button to grant Sheets access.
-// Using an explicit button (direct user action) prevents popup blockers from
-// silently swallowing the consent window.
+// ── Consent screen (Sheets access) ───────────────────────────────────────────
 
 function showSheetsConsentScreen(onGranted) {
-  const screen = document.getElementById('loading-screen');
-  screen.classList.remove('hidden');
-  screen.innerHTML = `
-    <div class="text-center max-w-sm px-6">
-      <div class="text-4xl mb-4">📊</div>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-2">One more step</h2>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
+  showScreen('loading-screen');
+  document.getElementById('loading-screen').innerHTML = `
+    <div style="text-align:center;max-width:320px;padding:24px;margin:0 auto">
+      <div style="font-size:36px;margin-bottom:14px">📊</div>
+      <p style="font-size:15px;font-weight:500;color:var(--text-primary);margin-bottom:6px">One more step</p>
+      <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:24px">
         MonarchWealthView needs permission to read and write your Google Sheet.
-        A Google permission window will open — please click <strong>Allow</strong>.
+        A Google permission window will open — click <strong>Allow</strong>.
       </p>
-      <button id="grant-sheets-btn"
-        class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm w-full mb-3">
+      <button id="grant-sheets-btn" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px 14px">
         Connect Google Sheets
       </button>
-      <p class="text-xs text-gray-400" id="grant-status"></p>
+      <p id="grant-status" style="font-size:12px;color:var(--color-liability);margin-top:10px;min-height:18px"></p>
     </div>
   `;
 
   document.getElementById('grant-sheets-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('grant-sheets-btn');
+    const btn    = document.getElementById('grant-sheets-btn');
     const status = document.getElementById('grant-status');
     btn.disabled = true;
     btn.textContent = 'Waiting for permission…';
     status.textContent = '';
 
-    const result = await requestAccessToken(true); // forceConsent=true — called from click, safe from popup blockers
-
+    const result = await requestAccessToken(true);
     if (result?.token) {
       onGranted();
     } else {
       btn.disabled = false;
       btn.textContent = 'Connect Google Sheets';
       status.textContent = result?.error === 'popup_closed'
-        ? 'Window was closed. Please try again.'
-        : `Error: ${result?.error || 'unknown'}. Please try again.`;
+        ? 'Window was closed — please try again.'
+        : `Error: ${result?.error || 'unknown'}`;
     }
   });
 }
 
-// ── App load sequence ─────────────────────────────────────────────────────────
+// ── App load ──────────────────────────────────────────────────────────────────
 
-async function loadApp(user) {
-  // Step 1: Show the Sheets consent screen with an explicit button.
-  // This avoids popup blockers and gives the user clear feedback.
+async function loadApp() {
   showSheetsConsentScreen(async () => {
-    await finishLoading();
+    document.getElementById('loading-screen').innerHTML = `
+      <div style="text-align:center">
+        <div style="width:36px;height:36px;border-radius:50%;border:2.5px solid rgba(0,0,0,0.08);border-top-color:var(--color-primary);animation:spin 0.7s linear infinite;margin:0 auto 14px"></div>
+        <p id="loading-message" style="font-size:13px;color:var(--text-tertiary)">Loading portfolio data…</p>
+      </div>
+    `;
+
+    try {
+      await loadAllData();
+      setLoadingMessage('Loading exchange rates…');
+      await loadRates();
+
+      showScreen('app-shell');
+      renderNav();
+      initMobileSidebar();
+      wireTopBar();
+      initRouter();
+
+      // Date in top bar
+      const dateEl = document.getElementById('topbar-date');
+      if (dateEl) dateEl.textContent = 'As of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+      navigate(window.location.hash || '#dashboard');
+
+    } catch (err) {
+      console.error('Load failed:', err);
+      setLoadingMessage(`Error: ${err.message}. Please refresh.`);
+    }
   });
 }
 
-async function finishLoading() {
-  const screen = document.getElementById('loading-screen');
-  screen.innerHTML = `
-    <div class="text-center">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-      <p id="loading-message" class="text-gray-400 dark:text-gray-500 text-sm">Loading portfolio data…</p>
-    </div>
-  `;
+// ── Top bar wiring ────────────────────────────────────────────────────────────
 
-  try {
-    await loadAllData();
-    setLoadingMessage('Loading exchange rates…');
-    await loadRates();
+function wireTopBar() {
+  // Refresh on nav (update date)
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash || '#dashboard';
+    updateNavActive(hash);
+    const dateEl = document.getElementById('topbar-date');
+    if (dateEl) dateEl.textContent = 'As of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  });
 
-    showScreen('app-shell');
-    initDarkMode();
-    renderNav();
-    initRouter();
+  // + Add Account button
+  document.getElementById('add-account-topbar-btn')?.addEventListener('click', async () => {
+    window._openAddForm = true;
+    navigate('#accounts');
+  });
 
-    document.getElementById('refresh-btn')?.addEventListener('click', async () => {
-      const btn = document.getElementById('refresh-btn');
-      btn.style.opacity = '0.4';
-      btn.style.pointerEvents = 'none';
-      try {
-        await loadAllData();
-        await loadRates();
-        navigate(window.location.hash || '#dashboard');
-      } finally {
-        btn.style.opacity = '';
-        btn.style.pointerEvents = '';
-      }
-    });
+  // Edit Profile button
+  document.getElementById('edit-profile-btn')?.addEventListener('click', () => {
+    navigate('#profile');
+  });
 
-    navigate(window.location.hash || '#dashboard');
-
-  } catch (err) {
-    console.error('App load failed:', err);
-    setLoadingMessage(`Error: ${err.message}. Please refresh the page.`);
-  }
+  // Refresh icon (re-use topbar date as a subtle click target — or add a refresh icon)
+  document.getElementById('topbar-date')?.addEventListener('dblclick', async () => {
+    try {
+      await loadAllData();
+      await loadRates();
+      navigate(window.location.hash || '#dashboard');
+    } catch (e) { /* silent */ }
+  });
 }
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -150,29 +134,21 @@ async function init() {
 
   try {
     await initAuth(
-      // onSignIn — user is on the whitelist
-      (user) => {
-        loadApp(user);
-      },
-      // onDenied — user is NOT on the whitelist
+      () => loadApp(),
       (email) => {
         document.getElementById('access-denied-email').textContent = email;
         document.getElementById('access-denied-signout').addEventListener('click', signOut);
         showScreen('access-denied-screen');
       }
     );
-
-    // Show sign-in screen and render the Google button
     showScreen('signin-screen');
     renderSignInButton('google-signin-btn');
-
   } catch (err) {
     console.error('Auth init failed:', err);
-    setLoadingMessage(`Failed to load Google sign-in. Check your internet connection and refresh. (${err.message})`);
+    setLoadingMessage(`Failed to initialise. Check connection and refresh. (${err.message})`);
   }
 }
 
-// Run after DOM is ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {

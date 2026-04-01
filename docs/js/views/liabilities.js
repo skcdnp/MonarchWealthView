@@ -1,84 +1,97 @@
-// views/liabilities.js — liabilities view with debt-to-asset ratio.
-
 import { store, assets, liabilities } from '../store.js';
 import { convert, formatCurrency } from '../currency.js';
+import { accountIconHTML, getAccountColor, donutWithLegend } from '../utils/charts.js';
 
 export async function render(container) {
   const currency = store.profile?.baseCurrency || CONFIG.BASE_CURRENCY;
-  const liabs = liabilities();
+  const liabs     = liabilities();
   const assetList = assets();
 
-  const totalLiab = liabs.reduce((s, a) =>
+  const totalLiab   = liabs.reduce((s, a) =>
     s + convert(parseFloat(a.balance)||0, a.currency||'USD', currency), 0);
   const totalAssets = assetList.reduce((s, a) =>
     s + convert(parseFloat(a.balance)||0, a.currency||'USD', currency), 0);
 
-  const dta = totalAssets > 0 ? ((totalLiab / totalAssets) * 100).toFixed(1) : '—';
-  const dtaNum = totalAssets > 0 ? (totalLiab / totalAssets) * 100 : 0;
-  const dtaColor = dtaNum > 80 ? 'text-red-500' : dtaNum > 40 ? 'text-yellow-500' : 'text-green-600';
+  const debtRatio = totalAssets > 0 ? ((totalLiab / totalAssets)*100).toFixed(1) : '0';
+  const largest   = liabs.reduce((max, a) => {
+    const v = convert(parseFloat(a.balance)||0, a.currency||'USD', currency);
+    return v > (max?.val || 0) ? { name: a.name, val: v } : max;
+  }, null);
 
-  // Group by account type
+  // Donut segments by type
   const grouped = liabs.reduce((acc, a) => {
     (acc[a.accountType] = acc[a.accountType] || []).push(a);
     return acc;
   }, {});
+  const donutItems = Object.entries(grouped).map(([type, accs]) => {
+    const val = accs.reduce((s, a) => s + convert(parseFloat(a.balance)||0, a.currency||'USD', currency), 0);
+    return { label: type, value: val, formattedValue: formatCurrency(val, currency), color: getAccountColor(type) };
+  }).sort((a, b) => b.value - a.value);
+
+  const dtaColor = parseFloat(debtRatio) > 80
+    ? 'var(--color-liability)'
+    : parseFloat(debtRatio) > 40 ? 'var(--color-illiquid)' : 'var(--color-asset)';
 
   container.innerHTML = `
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-      <div class="bg-red-50 dark:bg-red-900/20 rounded-xl p-5 border border-red-100 dark:border-red-900/40">
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Total Liabilities</p>
-        <p class="text-2xl font-bold text-red-500 dark:text-red-400 kpi-value">${formatCurrency(totalLiab, currency)}</p>
-      </div>
-      <div class="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-100 dark:border-gray-700">
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Accounts</p>
-        <p class="text-2xl font-bold text-gray-700 dark:text-white">${liabs.length}</p>
-      </div>
-      <div class="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-100 dark:border-gray-700">
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Debt-to-Asset Ratio</p>
-        <p class="text-2xl font-bold kpi-value ${dtaColor}">${typeof dta === 'string' ? dta : dta + '%'}</p>
-        ${totalAssets > 0 ? `<p class="text-xs text-gray-400 mt-1">${dtaNum > 80 ? 'High' : dtaNum > 40 ? 'Moderate' : 'Healthy'}</p>` : ''}
-      </div>
+    <!-- Summary cards -->
+    <div class="summary-grid">
+      ${sc('TOTAL LIABILITIES', `(${formatCurrency(totalLiab, currency)})`, `${liabs.length} accounts`, 'var(--color-liability)')}
+      ${sc('DEBT-TO-ASSET',     debtRatio + '%', parseFloat(debtRatio) > 80 ? 'High' : parseFloat(debtRatio) > 40 ? 'Moderate' : 'Healthy', dtaColor)}
+      ${sc('LARGEST DEBT',      largest ? formatCurrency(largest.val, currency) : '—', largest?.name || 'None', 'var(--color-liability)')}
     </div>
 
-    ${Object.keys(grouped).length === 0
-      ? `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
-           <p class="text-gray-400 text-sm">No liabilities recorded.</p>
-         </div>`
-      : Object.entries(grouped).map(([type, accs]) => {
-          const groupTotal = accs.reduce((s, a) =>
-            s + convert(parseFloat(a.balance)||0, a.currency||'USD', currency), 0);
-          return `
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-5">
-              <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                <h3 class="font-semibold text-gray-700 dark:text-gray-200">${type}</h3>
-                <span class="font-bold text-red-500 dark:text-red-400 kpi-value text-sm">${formatCurrency(groupTotal, currency)}</span>
-              </div>
-              <table class="w-full text-sm">
-                <thead class="bg-gray-50 dark:bg-gray-700/50">
-                  <tr>
-                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Account</th>
-                    <th class="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Balance</th>
-                    <th class="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide hidden md:table-cell">% of Debt</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-                  ${accs.map(a => {
-                    const bal = convert(parseFloat(a.balance)||0, a.currency||'USD', currency);
-                    const pct = totalLiab > 0 ? ((bal/totalLiab)*100).toFixed(1) : '0';
-                    return `<tr class="account-row">
-                      <td class="px-5 py-3">
-                        <p class="font-medium text-gray-800 dark:text-white">${a.name}</p>
-                        ${a.institution ? `<p class="text-xs text-gray-400">${a.institution}</p>` : ''}
-                      </td>
-                      <td class="px-5 py-3 text-right font-medium text-red-500 dark:text-red-400 kpi-value">${formatCurrency(bal, currency)}</td>
-                      <td class="px-5 py-3 text-right text-gray-400 text-xs hidden md:table-cell">${pct}%</td>
-                    </tr>`;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>
-          `;
-        }).join('')
-    }
+    <div class="two-col">
+      <!-- Liability list -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Liabilities</span></div>
+        ${liabs.length === 0
+          ? `<div class="empty-state" style="padding:24px 0">
+               <div class="empty-state-icon">✓</div>
+               <div class="empty-state-title">No liabilities</div>
+               <div class="empty-state-sub">Debt-free!</div>
+             </div>`
+          : liabs.map(a => {
+              const bal = convert(parseFloat(a.balance)||0, a.currency||'USD', currency);
+              const pct = totalLiab > 0 ? ((bal/totalLiab)*100).toFixed(1) : '0';
+              return `
+                <div class="account-row">
+                  ${accountIconHTML(a.accountType)}
+                  <div class="acct-info">
+                    <div class="acct-name">${a.name}</div>
+                    <div class="acct-meta">
+                      <span>${a.accountType}</span>
+                      ${a.institution ? `<span>· ${a.institution}</span>` : ''}
+                      <span class="pill pill-liability">Liability</span>
+                    </div>
+                  </div>
+                  <div style="text-align:right">
+                    <div class="acct-balance" style="color:var(--color-liability)">(${formatCurrency(bal, currency)})</div>
+                    <div style="font-size:11px;color:var(--text-tertiary)">${pct}% of debt</div>
+                  </div>
+                </div>
+              `;
+            }).join('')
+        }
+      </div>
+
+      <!-- Donut breakdown -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Breakdown</span></div>
+        ${donutItems.length === 0
+          ? `<p style="font-size:13px;color:var(--text-tertiary)">No liabilities to display.</p>`
+          : donutWithLegend(donutItems)
+        }
+      </div>
+    </div>
+  `;
+}
+
+function sc(label, value, sub, color = 'var(--text-primary)') {
+  return `
+    <div class="summary-card">
+      <div class="summary-card-label">${label}</div>
+      <div class="summary-card-value" style="color:${color}">${value}</div>
+      <div class="summary-card-sub">${sub}</div>
+    </div>
   `;
 }
