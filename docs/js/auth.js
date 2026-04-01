@@ -17,7 +17,6 @@
 import { store } from './store.js';
 
 const SESSION_USER_KEY = 'mwv_user';
-let tokenClient = null;
 
 function parseJwt(token) {
   const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -94,15 +93,6 @@ export async function initAuth(onSignIn, onDenied) {
   });
   await gapi.client.init({});
 
-  // 3. Token client — redirect mode (no popup, unaffected by COOP)
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.CLIENT_ID,
-    scope: CONFIG.SCOPES,
-    ux_mode: 'redirect',
-    redirect_uri: window.location.origin + window.location.pathname,
-    // callback is not used in redirect mode — token comes back in URL hash
-    callback: () => {},
-  });
 }
 
 export function renderSignInButton(containerId) {
@@ -114,12 +104,22 @@ export function renderSignInButton(containerId) {
 }
 
 /**
- * Trigger the Sheets token redirect.
- * Must be called from a direct user click (button handler).
+ * Redirect to Google's OAuth authorization endpoint (implicit/token flow).
+ * Google returns the access token in the URL hash: #access_token=...
+ * This approach requires only an Authorized JavaScript Origin in Google Cloud —
+ * no redirect URI registration needed.
  */
 export function requestAccessToken() {
-  tokenClient.requestAccessToken();
-  // Never resolves — the page navigates away
+  const redirectUri = window.location.origin + window.location.pathname;
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id',             CONFIG.CLIENT_ID);
+  url.searchParams.set('redirect_uri',          redirectUri);
+  url.searchParams.set('response_type',         'token');
+  url.searchParams.set('scope',                 CONFIG.SCOPES);
+  url.searchParams.set('include_granted_scopes','true');
+  url.searchParams.set('prompt',                'consent');
+  window.location.href = url.toString();
+  // Page navigates away — execution stops here
 }
 
 export function setAccessToken(token) {
