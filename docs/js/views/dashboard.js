@@ -6,8 +6,13 @@ import { accountIconHTML, getAccountColor, cssBarChart, donutWithLegend } from '
 export async function render(container) {
   const currency = store.profile?.baseCurrency || CONFIG.BASE_CURRENCY;
 
+  // Diagnostic — remove after fix
+  console.log('[MWV] All accounts:', store.accounts.length);
+  console.log('[MWV] Sample isArchived values:', store.accounts.slice(0,3).map(a => JSON.stringify(a.isArchived)));
+  console.log('[MWV] Sample classification values:', store.accounts.slice(0,3).map(a => JSON.stringify(a.classification)));
   const assetList = assets();
   const liabList  = liabilities();
+  console.log('[MWV] assets():', assetList.length, 'liabilities():', liabList.length);
 
   const totalAssets = assetList.reduce((s, a) =>
     s + convert(parseFloat(a.balance) || 0, a.currency || 'USD', currency), 0);
