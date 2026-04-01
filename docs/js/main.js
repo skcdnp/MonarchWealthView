@@ -116,6 +116,23 @@ async function init() {
   showScreen('loading-screen');
   setLoadingMessage('Initialising…');
 
+  // ── Check for OAuth error returned by Google ──
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  if (hashParams.get('error')) {
+    const errMsg = hashParams.get('error_description') || hashParams.get('error');
+    history.replaceState(null, '', window.location.pathname);
+    console.error('[MWV] OAuth error from Google:', errMsg);
+    document.getElementById('loading-screen').innerHTML = `
+      <div style="text-align:center;max-width:320px;padding:24px;margin:0 auto">
+        <div style="font-size:36px;margin-bottom:14px">⚠️</div>
+        <p style="font-size:15px;font-weight:500;color:var(--color-liability);margin-bottom:6px">Google auth error</p>
+        <p style="font-size:12px;color:var(--text-tertiary);margin-bottom:20px">${errMsg}</p>
+        <button class="btn btn-outline" onclick="window.location.reload()">Try again</button>
+      </div>
+    `;
+    return;
+  }
+
   // ── Case 1: returning from OAuth redirect with access token in URL ──
   const redirect = extractRedirectToken();
   if (redirect?.token) {
