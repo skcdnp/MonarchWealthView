@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MonarchWealthView</title>
+
+  <!-- Tailwind CSS (CDN play mode — scans dynamically rendered classes) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eff6ff', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' }
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Google API Client -->
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+
+  <!-- App config (sets global CONFIG before modules load) -->
+  <script src="config.js"></script>
+
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen">
+
+  <!-- ── SIGN-IN SCREEN ─────────────────────────────────────────────── -->
+  <div id="signin-screen" class="hidden min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-10 max-w-sm w-full text-center border border-gray-100 dark:border-gray-700">
+      <div class="text-4xl mb-4">👑</div>
+      <h1 class="text-2xl font-bold text-gray-800 dark:text-white mb-1">MonarchWealthView</h1>
+      <p class="text-gray-400 dark:text-gray-500 text-sm mb-8">Family Portfolio Management</p>
+      <div id="google-signin-btn" class="flex justify-center"></div>
+      <p class="text-xs text-gray-400 mt-6">Sign in with your authorised Google account</p>
+    </div>
+  </div>
+
+  <!-- ── ACCESS DENIED SCREEN ──────────────────────────────────────── -->
+  <div id="access-denied-screen" class="hidden min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-10 max-w-sm w-full text-center border border-red-100 dark:border-red-900">
+      <div class="text-4xl mb-4">🔒</div>
+      <h2 class="text-xl font-bold text-red-600 dark:text-red-400 mb-2">Access Not Granted</h2>
+      <p class="text-gray-500 dark:text-gray-400 text-sm mb-1">Signed in as:</p>
+      <p id="access-denied-email" class="font-medium text-gray-700 dark:text-gray-300 mb-4 text-sm"></p>
+      <p class="text-gray-400 dark:text-gray-500 text-sm mb-6">
+        Your Google account is not authorised to access this app.
+        Contact the owner to be added.
+      </p>
+      <button id="access-denied-signout"
+        class="text-sm text-blue-600 dark:text-blue-400 underline hover:text-blue-800">
+        Sign out and try another account
+      </button>
+    </div>
+  </div>
+
+  <!-- ── LOADING SCREEN ────────────────────────────────────────────── -->
+  <div id="loading-screen" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+      <p id="loading-message" class="text-gray-400 dark:text-gray-500 text-sm">Loading…</p>
+    </div>
+  </div>
+
+  <!-- ── APP SHELL (shown after auth + data load) ───────────────────── -->
+  <div id="app-shell" class="hidden flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside id="sidebar"
+      class="w-56 flex-shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-y-auto">
+    </aside>
+
+    <!-- Main area -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Top bar -->
+      <header class="h-14 flex-shrink-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6">
+        <div class="flex items-center gap-3">
+          <h2 id="page-title" class="text-base font-semibold text-gray-700 dark:text-gray-200"></h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="refresh-btn" title="Refresh data"
+            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg leading-none px-1"
+            aria-label="Refresh">↻</button>
+          <button id="darkmode-btn" title="Toggle dark mode"
+            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-base leading-none px-1">
+            🌙
+          </button>
+        </div>
+      </header>
+
+      <!-- Page content -->
+      <main id="main-content" class="flex-1 overflow-y-auto p-6"></main>
+    </div>
+  </div>
+
+  <!-- ── TOAST CONTAINER ───────────────────────────────────────────── -->
+  <div id="toast-container"
+    class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+  </div>
+
+  <!-- ── MODAL CONTAINER ───────────────────────────────────────────── -->
+  <div id="modal-container"></div>
+
+  <!-- ── APP ENTRY POINT ───────────────────────────────────────────── -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
