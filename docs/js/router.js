@@ -66,8 +66,12 @@ export async function navigate(hash) {
     const mod = await loader();
     await mod.render(container);
   } catch (err) {
-    console.error('View render error:', err);
-    container.innerHTML = `<p class="text-red-500 p-8">Failed to load view: ${err.message}</p>`;
+    console.error('[MWV] View render error:', err);
+    container.innerHTML = `
+      <div style="padding:32px;color:#A32D2D;background:#FCEBEB;border-radius:12px;font-size:13px">
+        <strong>View error:</strong> ${err.message}<br>
+        <span style="color:#555;font-size:12px">Check the browser console (F12) for details.</span>
+      </div>`;
   }
 }
 

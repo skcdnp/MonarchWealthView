@@ -99,19 +99,28 @@ async function findRowNumber(tab, id) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function loadAllData() {
-  const ranges = ['Accounts!A:M', 'BalanceHistory!A:F', 'UserProfiles!A:E']
-    .map(r => `ranges=${encodeURIComponent(r)}`).join('&');
+  // Fetch each tab separately — more reliable than batchGet for debugging
+  const [accountsData, historyData, profilesData] = await Promise.all([
+    sheetsGet(`/values/${encodeURIComponent('Accounts!A:M')}`),
+    sheetsGet(`/values/${encodeURIComponent('BalanceHistory!A:F')}`),
+    sheetsGet(`/values/${encodeURIComponent('UserProfiles!A:E')}`),
+  ]);
 
-  const data = await sheetsGet(`/values:batchGet?${ranges}`);
-  const [accountsRange, historyRange, profilesRange] = data.valueRanges;
+  console.log('[MWV] Raw Accounts rows:', accountsData?.values?.length ?? 0);
+  console.log('[MWV] Raw History rows:', historyData?.values?.length ?? 0);
+  console.log('[MWV] Accounts header:', accountsData?.values?.[0]);
+  console.log('[MWV] First account row:', accountsData?.values?.[1]);
 
-  store.accounts = rowsToObjects(accountsRange?.values);
-  store.history  = rowsToObjects(historyRange?.values);
+  store.accounts = rowsToObjects(accountsData?.values);
+  store.history  = rowsToObjects(historyData?.values);
 
-  const profiles = rowsToObjects(profilesRange?.values);
+  const profiles = rowsToObjects(profilesData?.values);
   store.profile  = profiles.find(p => p.email === store.user?.email) || null;
 
-  console.log(`Loaded: ${store.accounts.length} accounts, ${store.history.length} history rows`);
+  console.log(`[MWV] Parsed: ${store.accounts.length} accounts, ${store.history.length} history rows`);
+  if (store.accounts.length > 0) {
+    console.log('[MWV] First parsed account:', store.accounts[0]);
+  }
 }
 
 export async function saveAccount(account) {
