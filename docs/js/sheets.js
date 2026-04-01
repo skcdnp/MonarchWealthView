@@ -79,7 +79,7 @@ function accountToRow(a) {
     a.id, a.name, a.accountType, a.classification,
     a.liquidity || '', parseFloat(a.balance) || 0,
     a.currency || 'USD', a.institution || '', a.notes || '',
-    a.isArchived === true || a.isArchived === 'TRUE' ? 'TRUE' : 'FALSE',
+    (a.isArchived === true || a.isArchived === 'TRUE') ? 'TRUE' : 'FALSE',
     a.createdAt, a.updatedAt, a.updatedBy,
   ];
 }
@@ -99,17 +99,11 @@ async function findRowNumber(tab, id) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function loadAllData() {
-  // Fetch each tab separately — more reliable than batchGet for debugging
   const [accountsData, historyData, profilesData] = await Promise.all([
     sheetsGet(`/values/${encodeURIComponent('Accounts!A:M')}`),
     sheetsGet(`/values/${encodeURIComponent('BalanceHistory!A:F')}`),
     sheetsGet(`/values/${encodeURIComponent('UserProfiles!A:E')}`),
   ]);
-
-  console.log('[MWV] Raw Accounts rows:', accountsData?.values?.length ?? 0);
-  console.log('[MWV] Raw History rows:', historyData?.values?.length ?? 0);
-  console.log('[MWV] Accounts header:', accountsData?.values?.[0]);
-  console.log('[MWV] First account row:', accountsData?.values?.[1]);
 
   store.accounts = rowsToObjects(accountsData?.values);
   store.history  = rowsToObjects(historyData?.values);
@@ -117,11 +111,38 @@ export async function loadAllData() {
   const profiles = rowsToObjects(profilesData?.values);
   store.profile  = profiles.find(p => p.email === store.user?.email) || null;
 
-  console.log(`[MWV] Parsed: ${store.accounts.length} accounts, ${store.history.length} history rows`);
-  if (store.accounts.length > 0) {
-    console.log('[MWV] First parsed account:', store.accounts[0]);
+  // One-time repair: if every account has isArchived=TRUE it means the old
+  // accountToRow bug wrote 'TRUE' for all of them. Reset them all to FALSE.
+  const allArchived = store.accounts.length > 0 &&
+    store.accounts.every(a => a.isArchived === 'TRUE' || a.isArchived === true);
+  if (allArchived) {
+    console.log('[MWV] Detected all accounts marked archived (data bug) — repairing…');
+    await repairArchivedFlags();
+    console.log('[MWV] Repair done');
   }
 }
+
+// Bulk-update every account's isArchived column to FALSE in the sheet.
+async function repairArchivedFlags() {
+  // Column J (index 9) is isArchived. Update each row individually.
+  // We read the raw values to get row numbers, then patch column J.
+  const data = await sheetsGet(`/values/${encodeURIComponent('Accounts!A:A')}`);
+  const rows = data?.values || [];
+
+  // Build a batch of updates — one per account row (skip header row 1)
+  const updates = [];
+  for (let i = 1; i < rows.length; i++) {
+    updates.push(sheetsPut(
+      `/values/${encodeURIComponent(`Accounts!J${i + 1}`)}?valueInputOption=RAW`,
+      { values: [['FALSE']] }
+    ));
+  }
+  await Promise.all(updates);
+
+  // Fix in-memory store too
+  store.accounts.forEach(a => { a.isArchived = 'FALSE'; });
+}
+
 
 export async function saveAccount(account) {
   await sheetsPost(
