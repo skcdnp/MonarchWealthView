@@ -7,11 +7,10 @@ import { navigate, initRouter } from './router.js';
 // ── Screen helpers ────────────────────────────────────────────────────────────
 
 function showScreen(id) {
-  const screens = ['signin-screen','access-denied-screen','loading-screen','app-shell'];
-  screens.forEach(s => {
+  ['signin-screen','access-denied-screen','loading-screen','app-shell'].forEach(s => {
     const el = document.getElementById(s);
     if (!el) return;
-    el.style.display = s === id ? (s === 'app-shell' ? 'flex' : 'flex') : 'none';
+    el.style.display = s === id ? 'flex' : 'none';
   });
 }
 
