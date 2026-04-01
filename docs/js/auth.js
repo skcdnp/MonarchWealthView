@@ -67,14 +67,22 @@ export async function initAuth(onSignIn, onDenied) {
     client_id: CONFIG.CLIENT_ID,
     scope: CONFIG.SCOPES,
     callback: (tokenResponse) => {
+      const resolve = resolveTokenPromise;
+      resolveTokenPromise = null;
       if (tokenResponse.error) {
         console.error('Token error:', tokenResponse.error);
-        if (resolveTokenPromise) resolveTokenPromise(null);
+        resolve({ error: tokenResponse.error });
       } else {
         gapi.client.setToken({ access_token: tokenResponse.access_token });
-        if (resolveTokenPromise) resolveTokenPromise(tokenResponse.access_token);
+        resolve({ token: tokenResponse.access_token });
       }
+    },
+    error_callback: (err) => {
+      // Fired when the user closes the consent popup or popups are blocked
+      console.error('Token client error:', err);
+      const resolve = resolveTokenPromise;
       resolveTokenPromise = null;
+      if (resolve) resolve({ error: err.type || 'popup_closed' });
     },
   });
 }
@@ -98,14 +106,15 @@ export function renderSignInButton(containerId) {
 }
 
 /**
- * Request a Sheets-scoped access token. Returns the access token string.
- * Prompts the user only if no token is cached.
+ * Request a Sheets-scoped access token.
+ * Returns { token } on success or { error } on failure.
+ * Pass forceConsent=true to always show the Google consent screen
+ * (required when called from a direct user click to avoid popup blockers).
  */
-export function requestAccessToken() {
+export function requestAccessToken(forceConsent = false) {
   return new Promise((resolve) => {
     resolveTokenPromise = resolve;
-    // prompt: '' skips the account picker if the user is already signed in
-    tokenClient.requestAccessToken({ prompt: '' });
+    tokenClient.requestAccessToken({ prompt: forceConsent ? 'consent' : '' });
   });
 }
 

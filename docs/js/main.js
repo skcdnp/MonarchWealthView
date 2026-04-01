@@ -46,29 +46,80 @@ function initDarkMode() {
   if (btn) btn.textContent = isDark ? '☀️' : '🌙';
 }
 
+// ── Sheets consent screen ─────────────────────────────────────────────────────
+// Shown after Google sign-in. The user must click a button to grant Sheets access.
+// Using an explicit button (direct user action) prevents popup blockers from
+// silently swallowing the consent window.
+
+function showSheetsConsentScreen(onGranted) {
+  const screen = document.getElementById('loading-screen');
+  screen.classList.remove('hidden');
+  screen.innerHTML = `
+    <div class="text-center max-w-sm px-6">
+      <div class="text-4xl mb-4">📊</div>
+      <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-2">One more step</h2>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
+        MonarchWealthView needs permission to read and write your Google Sheet.
+        A Google permission window will open — please click <strong>Allow</strong>.
+      </p>
+      <button id="grant-sheets-btn"
+        class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm w-full mb-3">
+        Connect Google Sheets
+      </button>
+      <p class="text-xs text-gray-400" id="grant-status"></p>
+    </div>
+  `;
+
+  document.getElementById('grant-sheets-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('grant-sheets-btn');
+    const status = document.getElementById('grant-status');
+    btn.disabled = true;
+    btn.textContent = 'Waiting for permission…';
+    status.textContent = '';
+
+    const result = await requestAccessToken(true); // forceConsent=true — called from click, safe from popup blockers
+
+    if (result?.token) {
+      onGranted();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Connect Google Sheets';
+      status.textContent = result?.error === 'popup_closed'
+        ? 'Window was closed. Please try again.'
+        : `Error: ${result?.error || 'unknown'}. Please try again.`;
+    }
+  });
+}
+
 // ── App load sequence ─────────────────────────────────────────────────────────
 
 async function loadApp(user) {
-  showScreen('loading-screen');
-  setLoadingMessage('Connecting to Google Sheets…');
+  // Step 1: Show the Sheets consent screen with an explicit button.
+  // This avoids popup blockers and gives the user clear feedback.
+  showSheetsConsentScreen(async () => {
+    await finishLoading();
+  });
+}
+
+async function finishLoading() {
+  const screen = document.getElementById('loading-screen');
+  screen.innerHTML = `
+    <div class="text-center">
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+      <p id="loading-message" class="text-gray-400 dark:text-gray-500 text-sm">Loading portfolio data…</p>
+    </div>
+  `;
 
   try {
-    // Get Sheets-scoped access token (prompts user only if needed)
-    await requestAccessToken();
-
-    setLoadingMessage('Loading portfolio data…');
     await loadAllData();
-
     setLoadingMessage('Loading exchange rates…');
     await loadRates();
 
-    // Show the app
     showScreen('app-shell');
     initDarkMode();
     renderNav();
     initRouter();
 
-    // Wire up refresh button
     document.getElementById('refresh-btn')?.addEventListener('click', async () => {
       const btn = document.getElementById('refresh-btn');
       btn.style.opacity = '0.4';
@@ -83,12 +134,10 @@ async function loadApp(user) {
       }
     });
 
-    // Route to initial view
     navigate(window.location.hash || '#dashboard');
 
   } catch (err) {
     console.error('App load failed:', err);
-    // If token failed, it may be a gapi not-ready issue — stay on loading with error
     setLoadingMessage(`Error: ${err.message}. Please refresh the page.`);
   }
 }
