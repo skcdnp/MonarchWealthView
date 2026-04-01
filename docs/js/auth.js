@@ -54,14 +54,14 @@ export async function initAuth(onSignIn, onDenied) {
     cancel_on_tap_outside: false,
   });
 
-  // --- 2. gapi client (Sheets API access token) ---
+  // --- 2. gapi client (token storage only — no discovery doc needed) ---
   await new Promise((resolve, reject) => {
     gapi.load('client', { callback: resolve, onerror: reject });
   });
 
-  await gapi.client.init({
-    discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
-  });
+  // We use direct fetch calls for Sheets API, so no discovery doc is needed.
+  // gapi.client is only used here to store/retrieve the access token.
+  await gapi.client.init({});
 
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CONFIG.CLIENT_ID,
